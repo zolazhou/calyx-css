@@ -1,5 +1,6 @@
 (ns calyx.css.core
   (:require
+    [calyx.css.helper :refer [*class-name->garden*]]
     [clojure.java.io :as io]
     [clojure.stacktrace :as stacktrace]
     [clojure.string :as str]
@@ -166,7 +167,7 @@
       (fn [x]
         (when (and (vector? x)
                    (= (count x) 2)
-                   (= (first x) :class))
+                   (#{:class :className} (first x)))
           (doseq [n (find-tw-classes (second x))]
             (conj! classes n)))
         x)
@@ -299,17 +300,25 @@
         (doseq [form forms]
           (eval form))))))
 
+(defn- build-css
+  [build-id {:keys [ns-sym css] :as ns}]
+  (when (seq css)
+    (let [{:keys [garden-fn]} (get @state build-id)
+          tw->garden (or (some-> garden-fn requiring-resolve)
+                         *class-name->garden*)]
+      (binding [*class-name->garden* tw->garden]
+        (reload-ns ns)
+        (let [ns (find-ns ns-sym)]
+          (update-deps! build-id ns)
+          (->> (keys css)
+               (map #(generate-css ns %))
+               (str/join "\n")))))))
+
 (defn- gather-css!
   [build-id file]
   (try
-    (let [{:keys [ns-sym css tailwinds] :as ns} (find-css file)
-          css (when (seq css)
-                (reload-ns ns)
-                (let [ns (find-ns ns-sym)]
-                  (update-deps! build-id ns)
-                  (->> (keys css)
-                       (map #(generate-css ns %))
-                       (str/join "\n"))))]
+    (let [{:keys [ns-sym tailwinds] :as ns} (find-css file)
+          css (build-css build-id ns)]
       (when (or (some? css) (seq tailwinds))
         {:ns        ns-sym
          :file      file
