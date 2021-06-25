@@ -320,11 +320,13 @@
     (let [{:keys [ns-sym tailwinds] :as ns} (find-css file)
           css (build-css build-id ns)]
       (when (or (some? css) (seq tailwinds))
-        {:ns        ns-sym
-         :file      file
-         :order     (get (meta ns-sym) :garden-order 100)
-         :tailwinds tailwinds
-         :css       css}))
+        (let [{:keys [garden-order garden-file]} (meta ns-sym)]
+          {:ns        ns-sym
+           :file      file
+           :order     (or garden-order 100)
+           :output-to garden-file
+           :tailwinds tailwinds
+           :css       css})))
     (catch Exception e
       (println (str "[" build-id "]" file ": \uD83D\uDCA5 parse error!"))
       (stacktrace/print-cause-trace e))))
@@ -343,34 +345,64 @@
         (str "/* generated tailwind classes */\n"
              (css rules))))))
 
+(defn- spit-output-file
+  [{:keys [build-id output-dir filename garden-fn verbose?]} output-to data]
+  (let [output-file (io/file output-dir (or output-to filename))
+        tw-css      (when-let [garden-fn (some-> garden-fn requiring-resolve)]
+                      (->> data
+                           (mapcat :tailwinds)
+                           (into #{})
+                           (tw-classes->css garden-fn)))
+        all-css     (transduce (comp (map :css) (filter some?))
+                               conj
+                               data)]
+    (spit output-file (str/join "\n\n" (conj all-css tw-css)))
+    (swap! state update-in [build-id :file-data]
+           (fn [file-data]
+             (reduce
+               (fn [acc file-path]
+                 (update acc file-path assoc :dirty? false))
+               file-data
+               (map :file data))))
+    (when verbose?
+      (println (str "[" build-id "] \uD83C\uDF89 \u001B[32;1m" output-file " generated! \u001B[0m")))))
+
 (defn- spit-output
   [build-id]
-  (let [{:keys [output-file file-data garden-fn verbose?]} (get @state build-id)]
-    (let [file-parent (-> (io/file output-file)
-                          (.getParent)
-                          (io/file))]
-      (when-not (.exists file-parent)
-        (.mkdirs file-parent)))
-    (let [ordered (->> (vals file-data)
-                       (sort-by :order))
-          tw-css  (when-let [garden-fn (some-> garden-fn requiring-resolve)]
-                    (->> ordered
-                         (mapcat :tailwinds)
-                         (into #{})
-                         (tw-classes->css garden-fn)))
-          all-css (transduce (comp (map :css) (filter some?))
-                             conj
-                             ordered)]
-      (spit output-file (str/join "\n\n" (conj all-css tw-css)))
-      (when verbose?
-        (println (str "[" build-id "] \uD83C\uDF89 \u001B[32;1m" output-file " generated! \u001B[0m"))))))
+  (let [{:keys [output-dir filename file-data concat?] :as config} (get @state build-id)
+        grouped (if concat?
+                  {filename (sort-by :order (vals file-data))}
+                  (group-by :output-to (vals file-data)))
+        changed (->> grouped
+                     (filter #(some :dirty? (second %))))]
+    (when (seq changed)
+      (let [file-parent (io/file output-dir)]
+        (when-not (.exists file-parent)
+          (.mkdirs file-parent)))
+      (doseq [[output-to data] changed]
+        (spit-output-file config output-to data)))))
+
+(defn- update-state!
+  [build-id path result]
+  (let [digest (hash result)]
+    (swap! state update-in [build-id :file-data]
+           (fn [data]
+             (let [old (get data path)]
+               (tap> data)
+               (tap> {:build-id build-id
+                      :path     path
+                      :new      digest
+                      :old      old})
+               (assoc data path (if (= (:hash old) digest)
+                                  old
+                                  (assoc result :dirty? true :hash digest))))))))
 
 (defn- reload-file!
   [build-id path]
   (println (str "[" build-id "] \u001B[32;1mReloading " path "\u001B[0m"))
   (when-let [result (gather-css! build-id path)]
     (let [depended-by (get-in @state [build-id :deps-tree (:ns result) :depended-by])]
-      (swap! state update-in [build-id :file-data] assoc path result)
+      (update-state! build-id path result)
       (when (seq depended-by)
         (doseq [dep depended-by]
           (when-let [file (find-ns-file dep)]
@@ -406,10 +438,12 @@
         (reset! worker-thread t)))))
 
 (defn process
-  [{:keys [build-id source-paths file-extensions garden-fn output-file watch? verbose?]
+  [{:keys [build-id source-paths file-extensions garden-fn output-dir filename watch? concat? verbose?]
     :or   {source-paths    (find-source-paths)
            file-extensions ["cljs" "cljc" "clj"]
+           filename        "garden.css"
            watch?          false
+           concat?         false
            verbose?        true}}]
 
   (assert (and (seq source-paths)
@@ -419,9 +453,10 @@
                (every? string? file-extensions))
           "file-extensions should be a sequence of strings")
 
-  (assert (or (nil? output-file)
-              (string? output-file))
-          "output-file should be a string")
+  (assert (string? output-dir)
+          "output-dir should be a string")
+  (assert (or (nil? filename) (string? filename))
+          "filename should be a string")
 
   (assert (or (nil? garden-fn)
               (qualified-symbol? garden-fn))
@@ -445,15 +480,16 @@
         '[garden.selectors]
         '[garden.units])))
 
-  (let [output-file (or output-file "garden.css")
-        input-file? (partial input-file? file-extensions)]
-
-    (swap! state assoc build-id {:output-file output-file
-                                 :garden-fn   garden-fn
-                                 :verbose?    verbose?
-                                 :deps-tree   {}
-                                 :file-data   {}
-                                 :watch       nil})
+  (let [input-file? (partial input-file? file-extensions)]
+    (swap! state assoc build-id {:build-id   build-id
+                                 :output-dir output-dir
+                                 :filename   filename
+                                 :garden-fn  garden-fn
+                                 :verbose?   verbose?
+                                 :concat?    concat?
+                                 :deps-tree  {}
+                                 :file-data  {}
+                                 :watch      nil})
 
     (let [first-task {:build-id    build-id
                       :change-type :new
