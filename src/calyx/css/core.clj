@@ -215,6 +215,8 @@
                      (assoc! css s c))
             'defsc (when-let [[s c] (parse-component-css form)]
                      (assoc! css s c))
+            'defui (when-let [[s c] (parse-component-css form)]
+                     (assoc! css s c))
             nil))
         (when (not= form :eof)
           (recur (read-form stream read-opts)))))
