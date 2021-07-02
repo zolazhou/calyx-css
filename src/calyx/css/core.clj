@@ -350,6 +350,7 @@
 (defn- spit-output-file
   [{:keys [build-id output-dir filename garden-fn verbose?]} output-to data]
   (let [output-file (io/file output-dir (or output-to filename))
+        data        (sort-by :order data)
         tw-css      (when-let [garden-fn (some-> garden-fn requiring-resolve)]
                       (->> data
                            (mapcat :tailwinds)
@@ -373,7 +374,7 @@
   [build-id]
   (let [{:keys [output-dir filename file-data concat?] :as config} (get @state build-id)
         grouped (if concat?
-                  {filename (sort-by :order (vals file-data))}
+                  {filename (vals file-data)}
                   (group-by :output-to (vals file-data)))
         changed (->> grouped
                      (filter #(some :dirty? (second %))))]
