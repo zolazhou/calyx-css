@@ -492,7 +492,7 @@
                                  :output-dir  output-dir
                                  :filename    filename
                                  :garden-fn   garden-fn
-                                 :tw-class-fn (some-> tw-class-fn requiring-resolve)
+                                 :tw-class-fn tw-class-fn
                                  :verbose?    verbose?
                                  :concat?     concat?
                                  :deps-tree   {}
