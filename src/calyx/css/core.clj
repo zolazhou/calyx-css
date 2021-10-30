@@ -227,10 +227,14 @@
               :tailwinds (persistent! tailwinds))))
 
 (defn- find-css
-  [file]
-  (let [{:keys [css] :as ns} (read-file file)
-        [deps locals] (parse-deps ns (vals css))]
-    (assoc ns :locals locals :deps deps)))
+  [build-id file]
+  (let [{:keys [tw-class-fn]} (get @state build-id)
+        find-class (or (some-> tw-class-fn requiring-resolve)
+                       *find-tailwind-classes*)]
+    (binding [*find-tailwind-classes* find-class]
+      (let [{:keys [css] :as ns} (read-file file)
+            [deps locals] (parse-deps ns (vals css))]
+        (assoc ns :locals locals :deps deps)))))
 
 (defn- ns-form
   [{:keys [ns-sym ns-refer-clojure ns-vars deps locals css]}]
@@ -307,13 +311,10 @@
 (defn- build-css
   [build-id {:keys [ns-sym css] :as ns}]
   (when (seq css)
-    (let [{:keys [garden-fn tw-class-fn]} (get @state build-id)
+    (let [{:keys [garden-fn]} (get @state build-id)
           tw->garden (or (some-> garden-fn requiring-resolve)
-                         *class-name->garden*)
-          find-class (or (some-> tw-class-fn requiring-resolve)
-                         *find-tailwind-classes*)]
-      (binding [*class-name->garden*    tw->garden
-                *find-tailwind-classes* find-class]
+                         *class-name->garden*)]
+      (binding [*class-name->garden* tw->garden]
         (reload-ns ns)
         (let [ns (find-ns ns-sym)]
           (update-deps! build-id ns)
@@ -324,7 +325,7 @@
 (defn- gather-css!
   [build-id file]
   (try
-    (let [{:keys [ns-sym tailwinds] :as ns} (find-css file)
+    (let [{:keys [ns-sym tailwinds] :as ns} (find-css build-id file)
           css (build-css build-id ns)]
       (when (or (some? css) (seq tailwinds))
         (let [{:keys [garden-order garden-file]} (meta ns-sym)]
