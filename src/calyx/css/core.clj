@@ -142,7 +142,7 @@
     (deep-parse-deps ns forms deps vars)
     [@deps @vars]))
 
-(defn- find-tw-classes
+(defn all-tw-classes
   [form]
   (let [classes (transient [])]
     (postwalk
@@ -160,7 +160,7 @@
       form)
     (persistent! classes)))
 
-(defn- find-classes
+(defn attrs-tw-classes
   [forms]
   (let [classes (transient #{})]
     (postwalk
@@ -168,11 +168,13 @@
         (when (and (vector? x)
                    (= (count x) 2)
                    (#{:class :className} (first x)))
-          (doseq [n (find-tw-classes (second x))]
+          (doseq [n (all-tw-classes x)]
             (conj! classes n)))
         x)
       forms)
     (persistent! classes)))
+
+(def ^:dynamic *find-tailwind-classes* attrs-tw-classes)
 
 (defn- parse-component-css
   [[_defnc name params & body]]
@@ -189,7 +191,7 @@
   (when (and (list? form) (> (count form) 1)
              (not (#{'comment 'let} (second form))))
     [(second form)
-     (find-classes form)]))
+     (*find-tailwind-classes* form)]))
 
 (defn- read-file
   [file]
@@ -305,10 +307,13 @@
 (defn- build-css
   [build-id {:keys [ns-sym css] :as ns}]
   (when (seq css)
-    (let [{:keys [garden-fn]} (get @state build-id)
+    (let [{:keys [garden-fn tw-class-fn]} (get @state build-id)
           tw->garden (or (some-> garden-fn requiring-resolve)
-                         *class-name->garden*)]
-      (binding [*class-name->garden* tw->garden]
+                         *class-name->garden*)
+          find-class (or (some-> tw-class-fn requiring-resolve)
+                         *find-tailwind-classes*)]
+      (binding [*class-name->garden*    tw->garden
+                *find-tailwind-classes* find-class]
         (reload-ns ns)
         (let [ns (find-ns ns-sym)]
           (update-deps! build-id ns)
@@ -391,11 +396,6 @@
     (swap! state update-in [build-id :file-data]
            (fn [data]
              (let [old (get data path)]
-               (tap> data)
-               (tap> {:build-id build-id
-                      :path     path
-                      :new      digest
-                      :old      old})
                (assoc data path (if (= (:hash old) digest)
                                   old
                                   (assoc result :dirty? true :hash digest))))))))
@@ -441,7 +441,7 @@
         (reset! worker-thread t)))))
 
 (defn process
-  [{:keys [build-id source-paths file-extensions garden-fn output-dir filename watch? concat? verbose?]
+  [{:keys [build-id source-paths file-extensions garden-fn output-dir filename watch? concat? verbose? tw-class-fn]
     :or   {source-paths    (find-source-paths)
            file-extensions ["cljs" "cljc" "clj"]
            filename        "garden.css"
@@ -465,6 +465,10 @@
               (qualified-symbol? garden-fn))
           "garden-fn should be a qualified symbol")
 
+  (assert (or (nil? tw-class-fn)
+              (qualified-symbol? tw-class-fn))
+          "tw-class-fn should be a qualified symbol")
+
   (assert (boolean? watch?)
           "watch? should be a boolean")
   (assert (boolean? verbose?)
@@ -484,15 +488,16 @@
         '[garden.units])))
 
   (let [input-file? (partial input-file? file-extensions)]
-    (swap! state assoc build-id {:build-id   build-id
-                                 :output-dir output-dir
-                                 :filename   filename
-                                 :garden-fn  garden-fn
-                                 :verbose?   verbose?
-                                 :concat?    concat?
-                                 :deps-tree  {}
-                                 :file-data  {}
-                                 :watch      nil})
+    (swap! state assoc build-id {:build-id    build-id
+                                 :output-dir  output-dir
+                                 :filename    filename
+                                 :garden-fn   garden-fn
+                                 :tw-class-fn (some-> tw-class-fn requiring-resolve)
+                                 :verbose?    verbose?
+                                 :concat?     concat?
+                                 :deps-tree   {}
+                                 :file-data   {}
+                                 :watch       nil})
 
     (let [first-task {:build-id    build-id
                       :change-type :new

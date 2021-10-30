@@ -2,10 +2,11 @@
   #?(:cljs
      (:require-macros [calyx.css.helper]))
   (:require
+    [calyx.css.girouette :as gi]
     [clojure.string :as str]
+    [clojure.walk :refer [postwalk]]
     [garden.selectors :as s]
-    [garden.stylesheet :as gss]
-    [calyx.css.girouette :as gi]))
+    [garden.stylesheet :as gss]))
 
 
 (def ^:dynamic *class-name->garden* gi/class-name->garden)
