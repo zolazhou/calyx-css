@@ -25,5 +25,5 @@ Garden + JIT Tailwind (girouette) = 🎉
   (d/div {:class "dropbox"}
     ;; class names matching tailwind class name rule will be included in compiled css file
     (d/div {:class "input outline-none p-4"})
-    (d/div {:class (cx "popup" (when active? "active"))})))
+    (d/div {:class (cx "popup" active?)})))
 ```

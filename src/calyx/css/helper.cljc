@@ -4,7 +4,6 @@
   (:require
     [calyx.css.girouette :as gi]
     [clojure.string :as str]
-    [clojure.walk :refer [postwalk]]
     [garden.selectors :as s]
     [garden.stylesheet :as gss]))
 
@@ -69,6 +68,19 @@
 #?(:clj
    (defmacro cx
      [& classes]
-     (let [[raw dyn] (split-with string? classes)
-           raw (str/join " " raw)]
+     (let [raw     (filter string? classes)
+           symbols (->> classes
+                        (filter symbol?)
+                        (map #(vector (str/replace (name %) #"\?+$", "") %))
+                        (into {}))
+           dyn     (->> classes
+                        (filter #(and (not (string? %)) (not (symbol? %))))
+                        (into [symbols])
+                        (filter (complement empty?))
+                        (map (fn [x]
+                               (if (and (map? x) (= (count x) 1))
+                                 (let [[c v] (first x)]
+                                   `(when ~v ~c))
+                                 x))))
+           raw     (str/join " " raw)]
        `(cx* ~raw ~@dyn))))
