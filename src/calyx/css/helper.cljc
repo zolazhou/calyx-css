@@ -68,19 +68,20 @@
 #?(:clj
    (defmacro cx
      [& classes]
-     (let [raw     (filter string? classes)
-           symbols (->> classes
-                        (filter symbol?)
-                        (map #(vector (str/replace (name %) #"\?+$", "") %))
-                        (into {}))
-           dyn     (->> classes
-                        (filter #(and (not (string? %)) (not (symbol? %))))
-                        (into [symbols])
-                        (filter (complement empty?))
-                        (map (fn [x]
-                               (if (and (map? x) (= (count x) 1))
-                                 (let [[c v] (first x)]
-                                   `(when ~v ~c))
-                                 x))))
-           raw     (str/join " " raw)]
+     (let [raw       (filter string? classes)
+           bool-sym? #(and (symbol? %) (str/ends-with? (name %) "?"))
+           bools     (->> classes
+                          (filter bool-sym?)
+                          (map #(vector (str/replace (name %) #"\?+$", "") %))
+                          (into {}))
+           dyn       (->> classes
+                          (filter #(and (not (string? %)) (not (bool-sym? %))))
+                          (into [bools])
+                          (filter #(or (symbol? %) (some? (seq %))))
+                          (map (fn [x]
+                                 (if (and (map? x) (= (count x) 1))
+                                   (let [[c v] (first x)]
+                                     `(when ~v ~c))
+                                   x))))
+           raw       (str/join " " raw)]
        `(cx* ~raw ~@dyn))))
