@@ -1,3 +1,4 @@
+/css
 /target
 /classes
 /checkouts
@@ -15,3 +16,5 @@
 /.socket-repl-port
 .hgignore
 .hg/
+.clj-kondo
+.lsp

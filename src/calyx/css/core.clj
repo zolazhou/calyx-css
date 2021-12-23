@@ -1,6 +1,7 @@
 (ns calyx.css.core
   (:require
-    [calyx.css.helper :refer [*class-name->garden*]]
+    [calyx.css.helper :refer [*class-name->garden* css-scope]]
+    [calyx.css.util :as util]
     [clojure.java.io :as io]
     [clojure.stacktrace :as stacktrace]
     [clojure.string :as str]
@@ -279,12 +280,14 @@
                   (into #{}))]
     (swap! state update-in [build-id :deps-tree] #(depends-on* % name deps))))
 
+
 (defn- generate-css
-  [ns sym]
+  [ns scope-class sym]
   (when-let [x (ns-resolve ns sym)]
     (let [css (requiring-resolve 'garden.core/css)]
       (str "/* generated from: " ns "/" (name sym) " */\n"
-           (css (var-get x))))))
+           (css (->> (var-get x)
+                     (util/scoped-rule scope-class)))))))
 
 (defn- reload-deps
   [deps]
@@ -311,15 +314,22 @@
 (defn- build-css
   [build-id {:keys [ns-sym css] :as ns}]
   (when (seq css)
-    (let [{:keys [garden-fn]} (get @state build-id)
-          tw->garden (or (some-> garden-fn requiring-resolve)
-                         *class-name->garden*)]
+    (let [{:keys [garden-fn scoped?]} (get @state build-id)
+          {:keys [garden-scope]} (meta ns-sym)
+          tw->garden  (or (some-> garden-fn requiring-resolve)
+                          *class-name->garden*)
+          scope-class (some->>
+                        (cond
+                          (= garden-scope :global) nil
+                          (some? garden-scope) garden-scope
+                          scoped? (css-scope ns-sym))
+                        (str "."))]
       (binding [*class-name->garden* tw->garden]
         (reload-ns ns)
         (let [ns (find-ns ns-sym)]
           (update-deps! build-id ns)
           (->> (keys css)
-               (map #(generate-css ns %))
+               (map #(generate-css ns scope-class %))
                (str/join "\n")))))))
 
 (defn- gather-css!
@@ -442,12 +452,13 @@
         (reset! worker-thread t)))))
 
 (defn process
-  [{:keys [build-id source-paths file-extensions garden-fn output-dir filename watch? concat? verbose? tw-class-fn]
+  [{:keys [build-id source-paths file-extensions garden-fn output-dir filename watch? concat? scoped? verbose? tw-class-fn]
     :or   {source-paths    (find-source-paths)
            file-extensions ["cljs" "cljc" "clj"]
            filename        "garden.css"
            watch?          false
            concat?         false
+           scoped?         true
            verbose?        true}}]
 
   (assert (and (seq source-paths)
@@ -472,8 +483,12 @@
 
   (assert (boolean? watch?)
           "watch? should be a boolean")
+
   (assert (boolean? verbose?)
           "verbose? should be a boolean")
+
+  (assert (boolean? scoped?)
+          "scoped? should be a boolean")
 
   ;; stop previous watcher
   (when-let [watch (get-in @state [build-id :watch])]
@@ -496,6 +511,7 @@
                                  :tw-class-fn tw-class-fn
                                  :verbose?    verbose?
                                  :concat?     concat?
+                                 :scoped?     scoped?
                                  :deps-tree   {}
                                  :file-data   {}
                                  :watch       nil})

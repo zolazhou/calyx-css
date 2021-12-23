@@ -5,7 +5,11 @@
     [calyx.css.girouette :as gi]
     [clojure.string :as str]
     [garden.selectors :as s]
-    [garden.stylesheet :as gss]))
+    [garden.stylesheet :as gss]
+    #?(:clj
+       [calyx.css.util :as util]))
+  #?(:clj
+     (:import [java.util Arrays])))
 
 
 (def ^:dynamic *class-name->garden* gi/class-name->garden)
@@ -85,3 +89,19 @@
                                    x))))
            raw       (str/join " " raw)]
        `(cx* ~raw ~@dyn))))
+
+#?(:clj
+   (defn css-scope
+     ([] (css-scope *ns*))
+     ([s]
+      (let [^bytes bytes (util/md5 (str s))]
+        (str
+          ;; make sure starts with letter
+          (util/base52 (Arrays/copyOfRange bytes 0 1))
+          (util/base62 (Arrays/copyOfRange bytes 1 6)))))))
+
+#?(:clj
+   (defmacro scx
+     [& classes]
+     (let [scope (css-scope *ns*)]
+       `(cx ~scope ~@classes))))
