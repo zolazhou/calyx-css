@@ -1,62 +1,80 @@
 (ns calyx.css.helper
   #?(:cljs
      (:require-macros [calyx.css.helper]))
-  (:require
-    [calyx.css.girouette :as gi]
-    [clojure.string :as str]
-    [garden.selectors :as s]
-    [garden.stylesheet :as gss]
-    #?(:clj
-       [calyx.css.util :as util]))
+  #?(:clj
+     (:require
+       [calyx.css.girouette :as gi]
+       [calyx.css.util :as util]
+       [clojure.string :as str]
+       [garden.selectors :as s]
+       [garden.stylesheet :as gss]
+       [taoensso.encore :as encore])
+     :cljs
+     (:require
+       [clojure.string :as str]))
   #?(:clj
      (:import [java.util Arrays])))
 
 
-(def ^:dynamic *class-name->garden* gi/class-name->garden)
+#?(:clj (def ^:dynamic *class-name->garden* gi/class-name->garden))
 
-(defn tw->garden
-  "Generate garden style map based on tailwind classnames.
-  NOTE: Do not support tailwind variants, prefer garden selectors"
-  [classes]
-  (let [classes (if (string? classes)
-                  (str/split classes #" ")
-                  classes)]
-    (->> classes
-         (map *class-name->garden*)
-         (reduce
-           (fn [styles x]
-             (if (vector? x)
-               (let [s (second x)]
-                 (cond-> styles
-                   (map? s) (merge s)))
-               styles))
-           {}))))
+#?(:clj
+   (defn tw->garden
+     "Generate garden style map based on tailwind classnames.
+     NOTE: Do not support tailwind variants, prefer garden selectors"
+     [classes]
+     (let [classes (if (string? classes)
+                     (str/split classes #" ")
+                     classes)]
+       (->> classes
+            (map *class-name->garden*)
+            (reduce
+              (fn [styles x]
+                (if (vector? x)
+                  (let [s (second x)]
+                    (cond-> styles
+                      (map? s) (merge s)))
+                  styles))
+              {})))))
 
-(defn- tw*
-  [& classes]
-  (transduce (map tw->garden) merge classes))
+#?(:clj
+   (defn- tw*
+     [& classes]
+     (transduce (map tw->garden) merge classes)))
 
-(defn tw
-  [& classes]
-  (if (= (count classes) 1)
-    (tw->garden (first classes))
-    (apply tw* classes)))
+#?(:clj
+   (defn tw
+     [& classes]
+     (if (= (count classes) 1)
+       (tw->garden (first classes))
+       (apply tw* classes)))
 
-(defn dark
-  [& rules]
-  (apply gss/at-media {:prefers-color-scheme "dark"} rules))
+   :cljs
+   (defn tw [& _]))
 
-(defn &>
-  "Child combinator."
-  ([a]
-   (s/selector (str " > " (s/css-selector a))))
-  ([a b]
-   (s/selector (str (s/css-selector a) " > " (s/css-selector b))))
-  ([a b & more]
-   (->> (cons (&> a b) more)
-        (clojure.core/map s/css-selector)
-        (str/join " > ")
-        (s/selector))))
+#?(:clj
+   (defn dark
+     [& rules]
+     (apply gss/at-media {:prefers-color-scheme "dark"} rules))
+
+   :cljs
+   (defn dark [& _]))
+
+#?(:clj
+   (defn &>
+     "Child combinator."
+     ([a]
+      (s/selector (str " > " (s/css-selector a))))
+     ([a b]
+      (s/selector (str (s/css-selector a) " > " (s/css-selector b))))
+     ([a b & more]
+      (->> (cons (&> a b) more)
+           (clojure.core/map s/css-selector)
+           (str/join " > ")
+           (s/selector))))
+
+   :cljs
+   (defn &> [& _]))
 
 (defn cx*
   [& classes]
@@ -105,3 +123,18 @@
      [& classes]
      (let [scope (css-scope *ns*)]
        `(cx ~scope ~@classes))))
+
+#?(:clj
+   (defmacro defstyle
+     [sym & body]
+     (let [sym (with-meta sym {:garden true})]
+       `(encore/if-clj
+          (def ~sym ~@body)
+          (def ~sym nil)))))
+
+(comment
+
+  (macroexpand-1
+    '(defstyle xj []))
+
+  )

@@ -20,13 +20,13 @@
   (merge reader/default-data-readers
          {'js identity}))
 
-(defn- get-cljs-part
+(defn- get-clj-part
   [conditional]
-  (:cljs (reduce
-           (fn [acc [k v]]
-             (assoc acc k v))
-           {}
-           (partition-all 2 (:form conditional)))))
+  (:clj (reduce
+          (fn [acc [k v]]
+            (assoc acc k v))
+          {}
+          (partition-all 2 (:form conditional)))))
 
 (defn- read-form
   [stream {:keys [read-cond?]}]
@@ -37,7 +37,7 @@
       (postwalk
         (fn [x]
           (if (reader-conditional? x)
-            (get-cljs-part x)
+            (get-clj-part x)
             x))
         form)
       form)))
@@ -214,6 +214,8 @@
             'def (let [s (second form)]
                    (when (true? (:garden (meta s)))
                      (assoc! css s (last form))))
+            'defstyle (let [s (second form)]
+                        (assoc! css s (last form)))
             'defnc (when-let [[s c] (parse-component-css form)]
                      (assoc! css s c))
             'defsc (when-let [[s c] (parse-component-css form)]
