@@ -9,11 +9,12 @@
     [clojure.tools.deps.alpha.util.dir :refer [*the-dir*]]
     [clojure.tools.reader :as reader]
     [clojure.walk :refer [postwalk]]
+    [girouette.garden.util :as g.util]
     [shadow.cljs.devtools.server.fs-watch :as fs])
   (:import
+    [clojure.lang RT]
     [java.io File PushbackReader]
-    [java.util.concurrent ArrayBlockingQueue BlockingQueue TimeUnit]
-    [clojure.lang RT]))
+    [java.util.concurrent ArrayBlockingQueue BlockingQueue TimeUnit]))
 
 
 (def ^:private data-readers
@@ -351,19 +352,34 @@
       (println (str "[" build-id "]" file ": \uD83D\uDCA5 parse error!"))
       (stacktrace/print-cause-trace e))))
 
+(defn- string->classes [s]
+  (->> (str/split s #"\s+")
+       (remove str/blank?)))
+
+(defn- kw->classes [kw]
+  (->> (name kw)
+       (re-seq #"\.[^\.#]+")
+       (map (fn [s] (subs s 1)))))
+
+(defn- normalize-classes [x]
+  (if (string? x)
+    (string->classes x)
+    (kw->classes x)))
+
 (defn- tw-classes->css
-  [garden-fn classes]
-  (let [rules (reduce
-                (fn [acc class-name]
-                  (if-let [rule (garden-fn class-name)]
-                    (conj acc rule)
-                    acc))
-                []
-                classes)]
+  [build-id garden-fn classes]
+  (let [rules (->> (into #{} classes)
+                   (keep garden-fn)
+                   (sort g.util/rule-comparator))]
     (when (seq rules)
       (let [css (requiring-resolve 'garden.core/css)]
         (str "/* generated tailwind classes */\n"
-             (css rules))))))
+             (try
+               (css rules)
+               (catch Exception ex
+                 (println (str "[" build-id "]" ": \uD83D\uDCA5 garden rules error!"))
+                 (clojure.pprint/pprint rules)
+                 (throw ex))))))))
 
 (defn- spit-output-file
   [{:keys [build-id output-dir filename garden-fn verbose?]} output-to data]
@@ -373,7 +389,7 @@
                       (->> data
                            (mapcat :tailwinds)
                            (into #{})
-                           (tw-classes->css garden-fn)))
+                           (tw-classes->css build-id garden-fn)))
         all-css     (transduce (comp (map :css) (filter some?))
                                conj
                                data)]

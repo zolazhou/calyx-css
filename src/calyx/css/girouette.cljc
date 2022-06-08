@@ -44,6 +44,6 @@
 (def class-name->garden
   (let [f (:class-name->garden
             (make-api all-components
-                      {:color-map       color/default-color-map
-                       :font-family-map typography/default-font-family-map}))]
+                      {:color-map       color/tw-v3-unified-colors
+                       :font-family-map typography/tw-v2-font-family-map}))]
     (memoize f)))

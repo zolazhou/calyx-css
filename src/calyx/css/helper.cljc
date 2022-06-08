@@ -131,10 +131,3 @@
        `(encore/if-clj
           (def ~sym ~@body)
           (def ~sym nil)))))
-
-(comment
-
-  (macroexpand-1
-    '(defstyle xj []))
-
-  )
