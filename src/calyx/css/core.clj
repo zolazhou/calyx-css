@@ -499,7 +499,7 @@
         (on-file-changed! build-id file change-type))
       (spit-output build-id output?))))
 
-(defn persistent!
+(defn save!
   [build-id]
   (.offer queue {:build-id    build-id
                  :change-type :persistent}))

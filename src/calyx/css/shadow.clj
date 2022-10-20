@@ -1,6 +1,6 @@
 (ns calyx.css.shadow
   (:require
-    [calyx.css.core :refer [persistent! process]]
+    [calyx.css.core :refer [save! process]]
     [calyx.css.server :as server :refer [-event-msg-handler]]))
 
 (defonce started (atom false))
@@ -13,7 +13,7 @@
                    (keyword build-id)
                    build-id)]
     (swap! subscriptions update build-id (fnil conj #{}) uid)
-    (persistent! build-id)))
+    (save! build-id)))
 
 (add-watch server/connected-uids :connected-uids
            (fn [_ _ old new]
