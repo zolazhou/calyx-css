@@ -3,7 +3,7 @@
     [calyx.css.core :refer [persistent! process]]
     [calyx.css.server :as server :refer [-event-msg-handler]]))
 
-
+(defonce started (atom false))
 (defonce ^:private subscriptions (atom {}))
 
 (defmethod -event-msg-handler :calyx.css/connect
@@ -35,7 +35,8 @@
                  (doseq [uid (get @subscriptions build-id)]
                    (server/chsk-send! uid [:calyx.css/build msg])))
         push?  (:push? options)]
-    (when (and push? (not (server/started?)))
+    (when (and (not @started) push? (not (server/started?)))
+      (reset! started true)
       (server/start! nil))
     (process (cond-> options
                true (assoc :build-id build-id)
