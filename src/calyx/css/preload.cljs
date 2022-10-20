@@ -29,9 +29,11 @@
       (sente/make-channel-socket-client!
         "/chsk"                                             ; Must match server Ring routing URL
         nil
-        {:port   calyx/port
-         :type   :ws
-         :packer :edn})]
+        {:protocol :http
+         :host     "localhost"
+         :port     calyx/port
+         :type     :ws
+         :packer   :edn})]
 
   (def chsk chsk)
   (def ch-chsk ch-recv)                                     ; ChannelSocket's receive channel
