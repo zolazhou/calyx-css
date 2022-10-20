@@ -501,8 +501,10 @@
 
 (defn save!
   [build-id]
-  (.offer queue {:build-id    build-id
-                 :change-type :persistent}))
+  (try
+    (.offer queue {:build-id    build-id
+                   :change-type :persistent})
+    (catch Exception _ex nil)))
 
 (defonce ^:private worker-thread (atom nil))
 

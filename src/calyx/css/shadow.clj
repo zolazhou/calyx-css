@@ -35,9 +35,11 @@
                  (doseq [uid (get @subscriptions build-id)]
                    (server/chsk-send! uid [:calyx.css/build msg])))
         push?  (:push? options)]
-    (when (and (not @started) push? (not (server/started?)))
-      (reset! started true)
-      (server/start! nil))
+    (when push?
+      (locking started
+        (when (and (not @started) push? (not (server/started?)))
+          (reset! started true)
+          (server/start! (get options :server-port)))))
     (process (cond-> options
                true (assoc :build-id build-id)
                push? (assoc :push-fn pusher)
