@@ -31,11 +31,12 @@
 (defn hook
   {:shadow.build/stage :configure}
   [{:shadow.build/keys [build-id mode] :as build-state} & [options]]
-  (let [pusher (fn [msg]
-                 (doseq [uid (get @subscriptions build-id)]
-                   (server/chsk-send! uid [:calyx.css/build msg])))
-        push?  (:push? options)]
-    (when push?
+  (let [pusher   (fn [msg]
+                   (doseq [uid (get @subscriptions build-id)]
+                     (server/chsk-send! uid [:calyx.css/build msg])))
+        push?    (:push? options)
+        release? (= mode :release)]
+    (when (and push? (not release?))
       (locking started
         (when (and (not @started) push? (not (server/started?)))
           (reset! started true)
@@ -43,5 +44,5 @@
     (process (cond-> options
                true (assoc :build-id build-id)
                push? (assoc :push-fn pusher)
-               (= mode :release) (assoc :watch? false :push-fn nil)))
+               release? (assoc :watch? false :push-fn nil)))
     build-state))
