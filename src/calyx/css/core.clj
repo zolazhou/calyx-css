@@ -283,7 +283,6 @@
                   (into #{}))]
     (swap! state update-in [build-id :deps-tree] #(depends-on* % name deps))))
 
-
 (defn- generate-css
   [ns scope-class sym]
   (when-let [x (ns-resolve ns sym)]
@@ -381,31 +380,60 @@
                  (clojure.pprint/pprint rules)
                  (throw ex))))))))
 
+(defn- tailwind-css
+  [{:keys [build-id garden-fn]} filename data]
+  (when-let [garden-fn (some-> garden-fn requiring-resolve)]
+    (let [cached   (get-in @state [build-id :tailwind-cache filename])
+          classes  (->> data
+                        (mapcat :tailwinds)
+                        (into #{}))
+          changed? (not= cached classes)]
+      (when changed?
+        (swap! state assoc-in [build-id :tailwind-cache filename] classes))
+      [changed? (tw-classes->css build-id garden-fn classes)])))
+
+(defn- clear-dirty-flags!
+  [build-id data]
+  (swap! state update-in [build-id :file-data]
+         (fn [file-data]
+           (reduce
+             (fn [acc file-path]
+               (update acc file-path assoc :dirty? false))
+             file-data
+             (map :file data)))))
+
 (defn- spit-output-file
-  [{:keys [build-id output-dir filename garden-fn verbose?]} output-to data]
-  (let [output-file (io/file output-dir (or output-to filename))
-        data        (sort-by :order data)
-        tw-css      (when-let [garden-fn (some-> garden-fn requiring-resolve)]
-                      (->> data
-                           (mapcat :tailwinds)
-                           (into #{})
-                           (tw-classes->css build-id garden-fn)))
+  [{:keys [build-id output-dir filename verbose?] :as config} output-to data]
+  (let [data        (sort-by :order data)
+        output-to   (or output-to filename)
+        [_ tw-css] (tailwind-css config output-to data)
         all-css     (transduce (comp (map :css) (filter some?))
                                conj
-                               data)]
+                               data)
+        output-file (io/file output-dir output-to)]
     (spit output-file (str/join "\n\n" (conj all-css tw-css)))
-    (swap! state update-in [build-id :file-data]
-           (fn [file-data]
-             (reduce
-               (fn [acc file-path]
-                 (update acc file-path assoc :dirty? false))
-               file-data
-               (map :file data))))
     (when verbose?
       (println (str "[" build-id "] \uD83C\uDF89 \u001B[32;1m" output-file " generated! \u001B[0m")))))
 
+(defn- spit-output-push
+  [{:keys [filename push-fn] :as config} output-to data]
+  (let [data      (sort-by :order data)
+        output-to (or output-to filename)
+        [changed? tw-css] (tailwind-css config output-to data)
+        changes   (cond-> (->> data
+                               (filter :dirty?)
+                               (mapv (fn [{:keys [ns order css]}]
+                                       {:ns    (str ns)
+                                        :order order
+                                        :css   css})))
+                    changed? (conj {:ns    "tailwind"
+                                    :order 0
+                                    :css   tw-css}))]
+    (when (seq changes)
+      (push-fn {:changed changes}))))
+
 (defn- spit-output
-  [build-id]
+  [build-id output?]
   (let [{:keys [output-dir filename file-data concat?] :as config} (get @state build-id)
         grouped (if concat?
                   {filename (vals file-data)}
@@ -417,7 +445,22 @@
         (when-not (.exists file-parent)
           (.mkdirs file-parent)))
       (doseq [[output-to data] changed]
-        (spit-output-file config output-to data)))))
+        (if output?
+          (spit-output-file config output-to data)
+          (spit-output-push config output-to data))
+        (clear-dirty-flags! build-id data)))))
+
+(defn- spit-output-all
+  [build-id]
+  (let [{:keys [output-dir filename file-data concat?] :as config} (get @state build-id)
+        grouped (if concat?
+                  {filename (vals file-data)}
+                  (group-by :output-to (vals file-data)))]
+    (let [file-parent (io/file output-dir)]
+      (when-not (.exists file-parent)
+        (.mkdirs file-parent)))
+    (doseq [[output-to data] grouped]
+      (spit-output-file config output-to data))))
 
 (defn- update-state!
   [build-id path result]
@@ -448,10 +491,18 @@
       (reload-file! build-id path))))
 
 (defn- build
-  [{:keys [build-id files change-type]}]
-  (doseq [file files]
-    (on-file-changed! build-id file change-type))
-  (spit-output build-id))
+  [{:keys [build-id files change-type output?]}]
+  (if (= change-type :persistent)
+    (spit-output-all build-id)
+    (do
+      (doseq [file files]
+        (on-file-changed! build-id file change-type))
+      (spit-output build-id output?))))
+
+(defn persistent!
+  [build-id]
+  (.offer queue {:build-id    build-id
+                 :change-type :persistent}))
 
 (defonce ^:private worker-thread (atom nil))
 
@@ -470,7 +521,8 @@
         (reset! worker-thread t)))))
 
 (defn process
-  [{:keys [build-id source-paths file-extensions garden-fn output-dir filename watch? concat? scoped? verbose? tw-class-fn]
+  [{:keys [build-id source-paths file-extensions garden-fn output-dir filename
+           watch? concat? scoped? verbose? tw-class-fn push-fn]
     :or   {source-paths    (find-source-paths)
            file-extensions ["cljs" "cljc" "clj"]
            filename        "garden.css"
@@ -527,6 +579,7 @@
                                  :filename    filename
                                  :garden-fn   garden-fn
                                  :tw-class-fn tw-class-fn
+                                 :push-fn     push-fn
                                  :verbose?    verbose?
                                  :concat?     concat?
                                  :scoped?     scoped?
@@ -536,6 +589,7 @@
 
     (let [first-task {:build-id    build-id
                       :change-type :new
+                      :output?     true
                       :files       (->> (map io/file source-paths)
                                         (mapcat file-seq)
                                         (filter input-file?)
@@ -557,6 +611,7 @@
                                                        (seq))]
                                  (.offer queue {:build-id    build-id
                                                 :change-type type
+                                                :output?     (nil? push-fn)
                                                 :files       (mapv :file updates)})))))))
         ;; release build
         (time (build first-task))))))
