@@ -11,6 +11,10 @@
       (js/console.log.apply js/console (into-array (into [(str "%ccalyx-css: " msg) env/log-style] args)))
       (js/console.log.apply js/console (into-array (into [(str "calyx-css: " msg)] args))))))
 
+(defn- remove-calyx-files []
+  (doseq [node (js/document.querySelectorAll "[data-calyx]")]
+    (gdom/removeNode node)))
+
 (defn- update-style
   [{:keys [ns order css]}]
   (devtools-msg "load CSS" ns)
@@ -44,9 +48,9 @@
 ;;;; Sente event handlers
 
 (defmulti -event-msg-handler
-  "Multimethod to handle Sente `event-msg`s"
-  :id                                                       ; Dispatch on event-id
-  )
+          "Multimethod to handle Sente `event-msg`s"
+          :id                                               ; Dispatch on event-id
+          )
 
 (defn event-msg-handler
   "Wraps `-event-msg-handler` with logging, error catching, etc."
@@ -76,6 +80,7 @@
   [{:as ev-msg :keys [?data]}]
   (let [[?uid] ?data]
     (devtools-msg "Handshake: %s" ?data)
+    (remove-calyx-files)
     (chsk-send! [:calyx.css/connect {:build-id calyx/build-id}])))
 
 ;;;; Sente event router (our `event-msg-handler` loop)

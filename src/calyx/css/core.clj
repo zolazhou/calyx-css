@@ -416,19 +416,20 @@
       (println (str "[" build-id "] \uD83C\uDF89 \u001B[32;1m" output-file " generated! \u001B[0m")))))
 
 (defn- spit-output-push
-  [{:keys [filename push-fn] :as config} output-to data]
+  [{:keys [filename push-fn] :as config} output-to data force?]
   (let [data      (sort-by :order data)
         output-to (or output-to filename)
         [changed? tw-css] (tailwind-css config output-to data)
         changes   (cond-> (->> data
-                               (filter :dirty?)
+                               (filter (fn [{:keys [dirty?]}]
+                                         (or dirty? force?)))
                                (mapv (fn [{:keys [ns order css]}]
                                        {:ns    (str ns)
                                         :order order
                                         :css   css})))
-                    changed? (conj {:ns    "tailwind"
-                                    :order 0
-                                    :css   tw-css}))]
+                    (or changed? force?) (conj {:ns    "tailwind"
+                                                :order 0
+                                                :css   tw-css}))]
     (when (seq changes)
       (push-fn {:changed changes}))))
 
@@ -447,8 +448,17 @@
       (doseq [[output-to data] changed]
         (if output?
           (spit-output-file config output-to data)
-          (spit-output-push config output-to data))
+          (spit-output-push config output-to data false))
         (clear-dirty-flags! build-id data)))))
+
+(defn- do-push-all
+  [build-id]
+  (let [{:keys [filename file-data concat?] :as config} (get @state build-id)
+        grouped (if concat?
+                  {filename (vals file-data)}
+                  (group-by :output-to (vals file-data)))]
+    (doseq [[output-to data] grouped]
+      (spit-output-push config output-to data true))))
 
 (defn- spit-output-all
   [build-id]
@@ -492,12 +502,23 @@
 
 (defn- build
   [{:keys [build-id files change-type output?]}]
-  (if (= change-type :persistent)
+  (case change-type
+    :push-all
+    (do-push-all build-id)
+    :persistent
     (spit-output-all build-id)
+    ; else
     (do
       (doseq [file files]
         (on-file-changed! build-id file change-type))
       (spit-output build-id output?))))
+
+(defn push-all
+  [build-id]
+  (try
+    (.offer queue {:build-id    build-id
+                   :change-type :push-all})
+    (catch Exception _ex nil)))
 
 (defn save!
   [build-id]
