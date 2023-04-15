@@ -417,8 +417,7 @@
 
 (defn- spit-output-push
   [{:keys [filename push-fn] :as config} output-to data force?]
-  (let [data      (sort-by :order data)
-        output-to (or output-to filename)
+  (let [output-to (or output-to filename)
         [changed? tw-css] (tailwind-css config output-to data)
         changes   (cond-> (->> data
                                (filter (fn [{:keys [dirty?]}]
@@ -427,11 +426,11 @@
                                        {:ns    (str ns)
                                         :order order
                                         :css   css})))
-                    (or changed? force?) (conj {:ns    "tailwind"
+                    (or changed? force?) (conj {:ns    (str "tailwind." output-to)
                                                 :order 0
                                                 :css   tw-css}))]
     (when (seq changes)
-      (push-fn {:changed changes}))))
+      (push-fn {:changed (sort-by :order changes)}))))
 
 (defn- spit-output
   [build-id output?]
@@ -456,7 +455,8 @@
   (let [{:keys [filename file-data concat?] :as config} (get @state build-id)
         grouped (if concat?
                   {filename (vals file-data)}
-                  (group-by :output-to (vals file-data)))]
+                  (group-by :output-to (vals file-data)))
+        grouped (sort-by (fn [[_ v]] (get-in v [0 :order])) grouped)]
     (doseq [[output-to data] grouped]
       (spit-output-push config output-to data true))))
 
