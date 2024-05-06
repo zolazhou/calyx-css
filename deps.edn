@@ -1,5 +1,5 @@
 {:paths   ["src" "resources"]
- :deps    {com.taoensso/encore          {:mvn/version "3.31.0"}
+ :deps    {com.taoensso/encore          {:mvn/version "3.74.2"}
            com.taoensso/sente           {:mvn/version "1.19.2"}
            girouette/girouette          {:mvn/version "0.0.10"}
            http-kit/http-kit            {:mvn/version "2.6.0"}
