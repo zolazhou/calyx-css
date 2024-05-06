@@ -31,6 +31,7 @@
   )
 
 (defmethod -event-msg-handler :chsk/ws-ping [_] nil)
+(defmethod -event-msg-handler :chsk/ws-pong [_] nil)
 (defmethod -event-msg-handler :chsk/uidport-open [_] nil)
 (defmethod -event-msg-handler :chsk/uidport-close [_] nil)
 

@@ -54,13 +54,15 @@
 
 (defn event-msg-handler
   "Wraps `-event-msg-handler` with logging, error catching, etc."
-  [{:as ev-msg :keys [id ?data event]}]
+  [{:as ev-msg}]
   (-event-msg-handler ev-msg))
 
 (defmethod -event-msg-handler
   :default                                                  ; Default/fallback case (no other matching handler)
-  [{:as ev-msg :keys [event]}]
+  [{:keys [event]}]
   (devtools-msg "Unhandled event: %s" event))
+
+(defmethod -event-msg-handler :chsk/ws-ping [_] nil)
 
 (defmethod -event-msg-handler :chsk/state
   [{:as ev-msg :keys [?data]}]
@@ -69,7 +71,7 @@
       (devtools-msg "Channel socket successfully established!: %s" new-state-map)
       (devtools-msg "Channel socket state change: %s" new-state-map))))
 
-(defmethod -event-msg-handler :chsk/recv
+#_(defmethod -event-msg-handler :chsk/recv
   [{:keys [?data]}]
   (let [[type data] ?data]
     (case type
@@ -95,8 +97,9 @@
 
 
 (defmethod -event-msg-handler :calyx.css/build
-  [{:as ev-msg :keys [?data]}]
-  (devtools-msg "build: %s" ?data))
+  [{:keys [?data]}]
+  ;;(devtools-msg "build: %s" ?data)
+  (handle-changes (:changed ?data)))
 
 (defn init! []
   (start-router!))
