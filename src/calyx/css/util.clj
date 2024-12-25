@@ -17,7 +17,7 @@
         (when-not (zero? i)
           (.append s (nth chars (mod i total)))
           (recur (quot i total))))
-      (str (str/join (repeat zero-count "0")) (.reverse s)))))
+      (str (str/join (repeat zero-count (first chars))) (.reverse s)))))
 
 (def base62 (partial encode "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ" 62))
 (def base52 (partial encode "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ" 52))
