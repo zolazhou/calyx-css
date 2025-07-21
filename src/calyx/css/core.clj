@@ -48,8 +48,8 @@
 (defonce ^:private state (atom {}))
 
 (defonce
- ^{:private true :tag BlockingQueue}
- queue (ArrayBlockingQueue. 512 false))
+  ^{:private true :tag BlockingQueue}
+  queue (ArrayBlockingQueue. 512 false))
 
 (defn- find-source-paths
   []
@@ -381,7 +381,7 @@
   (try
     (let [{:keys [ns-sym tailwinds css-imports] :as ns} (find-css build-id file)
           css (build-css build-id ns)]
-      (when (or (some? css) (seq tailwinds))
+      (when (or (some? css) (seq tailwinds) (seq css-imports))
         (let [{:keys [garden-order garden-file]} (meta ns-sym)]
           {:ns        ns-sym
            :file      file
