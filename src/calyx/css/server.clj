@@ -1,9 +1,9 @@
 (ns calyx.css.server
   (:require
-    [org.httpkit.server :as http]
-    [ring.middleware.defaults]
-    [taoensso.sente :as sente]
-    [taoensso.sente.server-adapters.http-kit :refer [get-sch-adapter]]))
+   [org.httpkit.server :as http]
+   [ring.middleware.defaults]
+   [taoensso.sente :as sente]
+   [taoensso.sente.server-adapters.http-kit :refer [get-sch-adapter]]))
 
 (def ^:const default-server-port 5680)
 
@@ -15,9 +15,9 @@
 (let [{:keys [ch-recv send-fn connected-uids
               ajax-post-fn ajax-get-or-ws-handshake-fn]}
       (sente/make-channel-socket-server!
-        (get-sch-adapter)
-        {:csrf-token-fn nil
-         :user-id-fn    (fn [ring-req] (get-in ring-req [:params :client-id]))})]
+       (get-sch-adapter)
+       {:csrf-token-fn nil
+        :user-id-fn    (fn [ring-req] (get-in ring-req [:params :client-id]))})]
   (def ring-ajax-post ajax-post-fn)
   (def ring-ajax-get-or-ws-handshake ajax-get-or-ws-handshake-fn)
   (def ch-chsk ch-recv)                                     ; ChannelSocket's receive channel
@@ -49,11 +49,10 @@
 (defn start-router! []
   (stop-router!)
   (reset! router_ (sente/start-server-chsk-router!
-                    ch-chsk event-msg-handler)))
+                   ch-chsk event-msg-handler)))
 
 (comment
-  @connected-uids
-  )
+  @connected-uids)
 
 (defn broadcast! [msg]
   (let [uids (:any @connected-uids)]
@@ -78,9 +77,9 @@
 
 (def app
   (ring.middleware.defaults/wrap-defaults
-    handler
-    (assoc ring.middleware.defaults/site-defaults
-      :security nil)))
+   handler
+   (assoc ring.middleware.defaults/site-defaults
+          :security nil)))
 
 (defn stop-server! []
   (when-not (nil? @server)
@@ -106,12 +105,10 @@
   (stop!)
   (start! nil)
 
-  (start-server)
+  ;;(start-server)
 
   (defn log [x]
     (println x))
 
   (add-tap log)
-  (remove-tap log)
-
-  )
+  (remove-tap log))

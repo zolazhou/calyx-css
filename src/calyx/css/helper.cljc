@@ -3,18 +3,17 @@
      (:require-macros [calyx.css.helper]))
   #?(:clj
      (:require
-       [calyx.css.girouette :as gi]
-       [calyx.css.util :as util]
-       [clojure.string :as str]
-       [garden.selectors :as s]
-       [garden.stylesheet :as gss]
-       [taoensso.encore :as encore])
+      [calyx.css.girouette :as gi]
+      [calyx.css.util :as util]
+      [clojure.string :as str]
+      [garden.selectors :as s]
+      [garden.stylesheet :as gss]
+      [taoensso.encore :as encore])
      :cljs
      (:require
-       [clojure.string :as str]))
+      [clojure.string :as str]))
   #?(:clj
      (:import [java.util Arrays])))
-
 
 #?(:clj (def ^:dynamic *class-name->garden* gi/class-name->garden))
 
@@ -29,13 +28,13 @@
        (->> classes
             (map *class-name->garden*)
             (reduce
-              (fn [styles x]
-                (if (vector? x)
-                  (let [s (second x)]
-                    (cond-> styles
-                      (map? s) (merge s)))
-                  styles))
-              {})))))
+             (fn [styles x]
+               (if (vector? x)
+                 (let [s (second x)]
+                   (cond-> styles
+                     (map? s) (merge s)))
+                 styles))
+             {})))))
 
 #?(:clj
    (defn- tw*
@@ -115,8 +114,8 @@
       (let [^bytes bytes (util/md5 (str s))]
         (str
           ;; make sure starts with letter
-          (util/base52 (Arrays/copyOfRange bytes 0 1))
-          (util/base62 (Arrays/copyOfRange bytes 1 6)))))))
+         (util/base52 (Arrays/copyOfRange bytes 0 1))
+         (util/base62 (Arrays/copyOfRange bytes 1 6)))))))
 
 #?(:clj
    (defmacro scx
@@ -129,5 +128,8 @@
      [sym & body]
      (let [sym (with-meta sym {:garden true})]
        `(encore/if-clj
-          (def ~sym ~@body)
-          (def ~sym nil)))))
+         (def ~sym ~@body)
+         (def ~sym nil)))))
+
+#?(:clj
+   (defmacro import-css [& _]))

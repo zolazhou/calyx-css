@@ -1,21 +1,23 @@
 (ns calyx.css.core
   (:require
-    [calyx.css.helper :refer [*class-name->garden* css-scope]]
-    [calyx.css.util :as util]
-    [clojure.java.io :as io]
-    [clojure.stacktrace :as stacktrace]
-    [clojure.string :as str]
-    [clojure.tools.deps.alpha :as t]
-    [clojure.tools.deps.alpha.util.dir :refer [*the-dir*]]
-    [clojure.tools.reader :as reader]
-    [clojure.walk :refer [postwalk]]
-    [girouette.garden.util :as g.util]
-    [shadow.cljs.devtools.server.fs-watch :as fs])
+   [calyx.css.helper :refer [*class-name->garden* css-scope]]
+   [calyx.css.util :as util]
+   [clojure.core :as c]
+   [clojure.java.io :as io]
+   [clojure.stacktrace :as stacktrace]
+   [clojure.string :as str]
+   [clojure.tools.deps.alpha :as t]
+   [clojure.tools.deps.alpha.util.dir :refer [*the-dir*]]
+   [clojure.tools.reader :as reader]
+   [clojure.walk :refer [postwalk]]
+   [girouette.garden.util :as g.util]
+   [shadow.cljs.devtools.server.fs-watch :as fs])
   (:import
-    [clojure.lang RT]
-    [java.io File PushbackReader]
-    [java.util.concurrent ArrayBlockingQueue BlockingQueue TimeUnit]))
-
+   [clojure.lang RT]
+   [java.io File PushbackReader]
+   [java.net URL]
+   [java.nio.file Paths]
+   [java.util.concurrent ArrayBlockingQueue BlockingQueue TimeUnit]))
 
 (def ^:private data-readers
   (merge reader/default-data-readers
@@ -24,10 +26,10 @@
 (defn- get-clj-part
   [conditional]
   (:clj (reduce
-          (fn [acc [k v]]
-            (assoc acc k v))
-          {}
-          (partition-all 2 (:form conditional)))))
+         (fn [acc [k v]]
+           (assoc acc k v))
+         {}
+         (partition-all 2 (:form conditional)))))
 
 (defn- read-form
   [stream {:keys [read-cond?]}]
@@ -36,18 +38,18 @@
         form (reader/read opts stream)]
     (if read-cond?
       (postwalk
-        (fn [x]
-          (if (reader-conditional? x)
-            (get-clj-part x)
-            x))
-        form)
+       (fn [x]
+         (if (reader-conditional? x)
+           (get-clj-part x)
+           x))
+       form)
       form)))
 
 (defonce ^:private state (atom {}))
 
 (defonce
-  ^{:private true :tag BlockingQueue}
-  queue (ArrayBlockingQueue. 512 false))
+ ^{:private true :tag BlockingQueue}
+ queue (ArrayBlockingQueue. 512 false))
 
 (defn- find-source-paths
   []
@@ -72,70 +74,91 @@
 (defn- find-ns-aliases
   [forms]
   (reduce
-    (fn [aliases form]
-      (if (= (first form) :require)
-        (transduce
-          (comp (filter (fn [[s x & _]] (and (symbol? s) (= x :as))))
-                (map (fn [[s _ a & _]] [a (create-ns s)])))
-          conj
-          aliases
-          (rest form))
-        aliases))
-    {}
-    forms))
+   (fn [aliases form]
+     (if (= (first form) :require)
+       (transduce
+        (comp (filter (fn [[s x & _]] (and (symbol? s) (= x :as))))
+              (map (fn [[s _ a & _]] [a (create-ns s)])))
+        conj
+        aliases
+        (rest form))
+       aliases))
+   {}
+   forms))
 
 (defn- find-ns-refers
   [forms]
   (reduce
-    (fn [refers form]
-      (if (= (first form) :require)
-        (transduce
-          (comp (filter (fn [[ns & r]] (and (symbol? ns) (some (partial = :refer) r))))
-                (map (fn [[ns & r]]
-                       (mapv (fn [s] [s (create-ns ns)]) (last r)))))
-          into
-          refers
-          (rest form))
-        refers))
-    {}
-    forms))
+   (fn [refers form]
+     (if (= (first form) :require)
+       (transduce
+        (comp (filter (fn [[ns & r]] (and (symbol? ns) (some (partial = :refer) r))))
+              (map (fn [[ns & r]]
+                     (mapv (fn [s] [s (create-ns ns)]) (last r)))))
+        into
+        refers
+        (rest form))
+       refers))
+   {}
+   forms))
+
+(defn- find-ns-requires
+  [forms]
+  (reduce
+   (fn [acc form]
+     (if (= (first form) :require)
+       (transduce
+        (comp (filter (fn [[ns & _]] (symbol? ns)))
+              (map (fn [[ns & _]] (create-ns ns))))
+        conj
+        acc
+        (rest form))
+       acc))
+   #{}
+   forms))
 
 (defn- find-ns-refer-clojure
   [forms]
   (reduce
-    (fn [refers form]
-      (if (= (first form) :refer-clojure)
-        (conj refers form)
-        refers))
-    []
-    forms))
+   (fn [refers form]
+     (if (= (first form) :refer-clojure)
+       (conj refers form)
+       refers))
+   []
+   forms))
 
 (defn- read-ns
   [stream opts]
   (let [[x n & r] (read-form stream opts)]
     (when (= x 'ns)
       {:ns-sym           n
+       :ns-requires      (find-ns-requires r)
        :ns-aliases       (find-ns-aliases r)
        :ns-refers        (find-ns-refers r)
        :ns-refer-clojure (find-ns-refer-clojure r)})))
+
+(defn- read-file-ns
+  [file]
+  (read-ns (PushbackReader. (io/reader (io/file file)))
+           {:read-cond? (str/ends-with? file ".cljc")}))
 
 (def set-conj (fnil conj #{}))
 
 (defn- deep-parse-deps
   [{:keys [ns-aliases ns-refers ns-vars] :as ns} forms deps vars]
   (postwalk
-    (fn [x]
-      (when (and (symbol? x) (not (contains? @vars x)))
-        (if-let [n (some-> (namespace x) symbol)]
-          (when-let [d (get ns-aliases n)]
-            (swap! deps assoc-in [(ns-name d) :as] n))
-          (do
-            (when-let [d (get ns-refers x)]
-              (swap! deps update-in [(ns-name d) :refer] set-conj x))
-            (when-let [d (get ns-vars x)]
-              (swap! vars conj x)
-              (deep-parse-deps ns d deps vars))))))
-    forms))
+   (fn [x]
+     (when (and (symbol? x) (not (contains? @vars x)))
+       (if-let [n (some-> (namespace x) symbol)]
+         (when-let [d (get ns-aliases n)]
+           (swap! deps assoc-in [(ns-name d) :as] n))
+         (do
+           (when-let [d (get ns-refers x)]
+             (swap! deps update-in [(ns-name d) :refer] set-conj x))
+           (when-let [d (get ns-vars x)]
+             (swap! vars conj x)
+             (deep-parse-deps ns d deps vars))))))
+   forms))
 
 (defn- parse-deps
   [ns forms]
@@ -148,32 +171,32 @@
   [form]
   (let [classes (transient [])]
     (postwalk
-      (fn [x]
-        (cond
-          (string? x)
-          (doseq [n (->> (str/split x #" ")
-                         (remove str/blank?))]
-            (conj! classes n))
-          (keyword? x)
-          (doseq [n (->> (name x)
-                         (re-seq #"\.[^\.#]+")
-                         (map (fn [s] (subs s 1))))]
-            (conj! classes n))))
-      form)
+     (fn [x]
+       (cond
+         (string? x)
+         (doseq [n (->> (str/split x #" ")
+                        (remove str/blank?))]
+           (conj! classes n))
+         (keyword? x)
+         (doseq [n (->> (name x)
+                        (re-seq #"\.[^\.#]+")
+                        (map (fn [s] (subs s 1))))]
+           (conj! classes n))))
+     form)
     (persistent! classes)))
 
 (defn attrs-tw-classes
   [forms]
   (let [classes (transient #{})]
     (postwalk
-      (fn [x]
-        (when (and (vector? x)
-                   (= (count x) 2)
-                   (#{:class :className} (first x)))
-          (doseq [n (all-tw-classes x)]
-            (conj! classes n)))
-        x)
-      forms)
+     (fn [x]
+       (when (and (vector? x)
+                  (= (count x) 2)
+                  (#{:class :className} (first x)))
+         (doseq [n (all-tw-classes x)]
+           (conj! classes n)))
+       x)
+     forms)
     (persistent! classes)))
 
 (def ^:dynamic *find-tailwind-classes* attrs-tw-classes)
@@ -195,10 +218,23 @@
     [(second form)
      (*find-tailwind-classes* form)]))
 
+(defn- relative-to-cwd
+  [abs-path]
+  (let [cwd (Paths/get (System/getProperty "user.dir") (make-array String 0))
+        target (Paths/get abs-path (make-array String 0))]
+    (str (.relativize cwd target))))
+
+(defn- resolve-relative-path
+  [rel-path abs-path]
+  (let [base-dir (.getParentFile (io/file abs-path))]
+    (relative-to-cwd
+     (.getCanonicalPath (io/file base-dir rel-path)))))
+
 (defn- read-file
   [file]
   (let [stream    (PushbackReader. (io/reader (io/file file)))
         var-pos   (atom 0)
+        imports   (transient #{})
         tailwinds (transient #{})
         vars      (transient {})
         css       (transient {})
@@ -209,12 +245,16 @@
       (loop [form (read-form stream read-opts)]
         (when (list? form)
           (when-let [[v tw] (parse-var form)]
-            (assoc! vars v (with-meta form {:position (swap! var-pos inc)}))
-            (doseq [c tw] (conj! tailwinds c)))
+            (assoc! vars v
+                    (with-meta form {:position (swap! var-pos inc)}))
+            (doseq [c tw]
+              (conj! tailwinds c)))
           (condp = (first form)
             'def (let [s (second form)]
                    (when (true? (:garden (meta s)))
                      (assoc! css s (last form))))
+            'import-css (let [abs-path (resolve-relative-path (second form) file)]
+                          (conj! imports abs-path))
             'defstyle (let [s (second form)]
                         (assoc! css s (last form)))
             'defnc (when-let [[s c] (parse-component-css form)]
@@ -227,8 +267,9 @@
         (when (not= form :eof)
           (recur (read-form stream read-opts)))))
     (assoc ns :ns-vars (persistent! vars)
-              :css (persistent! css)
-              :tailwinds (persistent! tailwinds))))
+           :css (persistent! css)
+           :tailwinds (persistent! tailwinds)
+           :css-imports (persistent! imports))))
 
 (defn- find-css
   [build-id file]
@@ -263,10 +304,10 @@
 (defn- depended-by*
   [tree ns deps]
   (reduce
-    (fn [acc dep]
-      (update-in acc [dep :depended-by] set-conj ns))
-    tree
-    deps))
+   (fn [acc dep]
+     (update-in acc [dep :depended-by] set-conj ns))
+   tree
+   deps))
 
 (defn- depends-on*
   [tree ns deps]
@@ -281,7 +322,8 @@
                   vals
                   (map ns-name)
                   (into #{}))]
-    (swap! state update-in [build-id :deps-tree] #(depends-on* % name deps))))
+    (swap! state update-in [build-id :deps-tree]
+           #(depends-on* % name deps))))
 
 (defn- generate-css
   [ns scope-class sym]
@@ -321,11 +363,11 @@
           tw->garden  (or (some-> garden-fn requiring-resolve)
                           *class-name->garden*)
           scope-class (some->>
-                        (cond
-                          (= garden-scope :global) nil
-                          (some? garden-scope) garden-scope
-                          scoped? (css-scope ns-sym))
-                        (str "."))]
+                       (cond
+                         (= garden-scope :global) nil
+                         (some? garden-scope) garden-scope
+                         scoped? (css-scope ns-sym))
+                       (str "."))]
       (binding [*class-name->garden* tw->garden]
         (reload-ns ns)
         (let [ns (find-ns ns-sym)]
@@ -337,7 +379,7 @@
 (defn- gather-css!
   [build-id file]
   (try
-    (let [{:keys [ns-sym tailwinds] :as ns} (find-css build-id file)
+    (let [{:keys [ns-sym tailwinds css-imports] :as ns} (find-css build-id file)
           css (build-css build-id ns)]
       (when (or (some? css) (seq tailwinds))
         (let [{:keys [garden-order garden-file]} (meta ns-sym)]
@@ -346,10 +388,15 @@
            :order     (or garden-order 100)
            :output-to garden-file
            :tailwinds tailwinds
+           :css-imports css-imports
            :css       css})))
     (catch Exception e
       (println (str "[" build-id "]" file ": \uD83D\uDCA5 parse error!"))
       (stacktrace/print-cause-trace e))))
+
+(comment
+
+  (gather-css! "test" "src/pixcall/com/ui/aria/button.cljs"))
 
 (defn- string->classes [s]
   (->> (str/split s #"\s+")
@@ -397,10 +444,10 @@
   (swap! state update-in [build-id :file-data]
          (fn [file-data]
            (reduce
-             (fn [acc file-path]
-               (update acc file-path assoc :dirty? false))
-             file-data
-             (map :file data)))))
+            (fn [acc file-path]
+              (update acc file-path assoc :dirty? false))
+            file-data
+            (map :file data)))))
 
 (defn- spit-output-file
   [{:keys [build-id output-dir filename verbose?] :as config} output-to data]
@@ -475,33 +522,70 @@
 (defn- update-state!
   [build-id path result]
   (let [digest (hash result)]
-    (swap! state update-in [build-id :file-data]
-           (fn [data]
-             (let [old (get data path)]
-               (assoc data path (if (= (:hash old) digest)
-                                  old
-                                  (assoc result :dirty? true :hash digest))))))))
+    (swap! state update build-id
+           (fn [build]
+             (-> build
+                 (update :source-files conj path)
+                 (update :file-data
+                         (fn [data]
+                           (let [old (get data path)]
+                             (assoc data path (if (= (:hash old) digest)
+                                                old
+                                                (assoc result :dirty? true :hash digest)))))))))))
+
+(defn css-file-path->ns
+  "Converts a file path (e.g., src/a/b/c.clj) to a namespace string (e.g., a.b.c).
+   Assumes the path starts with a source directory like 'src/'."
+  [file-path]
+  (let [no-src (str/replace file-path #"^(src|test|dev)/" "")
+        no-ext (str/replace no-src #"\.(clj[cs]?|css)$" "")
+        ns-str (str/replace no-ext #"/" ".")]
+    (create-ns (symbol (str ns-str ".css")))))
+
+(defn- reload-css-file!
+  [build-id file-path]
+  (println (str "[" build-id "] \u001B[32;1m Reloading CSS file" file-path "\u001B[0m"))
+  (let [ns  (css-file-path->ns file-path)
+        css (str "/* generated from: " (name (ns-name ns)) " */\n"
+                 (slurp file-path))]
+    (update-state! build-id file-path {:ns        ns
+                                       :file      file-path
+                                       :order     100
+                                       :output-to nil
+                                       :css       css})))
+
+(defn- reload-clj-file!
+  [build-id file deep?]
+  (println (str "[" build-id "] \u001B[32;1mReloading " file "\u001B[0m"))
+  (when-let [result (gather-css! build-id file)]
+    (update-state! build-id file result)
+    (when (get-in @state [build-id :file-data file :dirty?])
+      (doseq [css-file (get-in @state [build-id :file-data file :css-imports])]
+        (reload-css-file! build-id css-file)))
+    (when deep?
+      (let [depended-by (get-in @state [build-id :deps-tree (:ns result) :depended-by])]
+        (when (seq depended-by)
+          (doseq [dep depended-by]
+            (when-let [file (find-ns-file dep)]
+              (reload-clj-file! build-id file deep?))))))))
 
 (defn- reload-file!
-  [build-id path]
-  (println (str "[" build-id "] \u001B[32;1mReloading " path "\u001B[0m"))
-  (when-let [result (gather-css! build-id path)]
-    (let [depended-by (get-in @state [build-id :deps-tree (:ns result) :depended-by])]
-      (update-state! build-id path result)
-      (when (seq depended-by)
-        (doseq [dep depended-by]
-          (when-let [file (find-ns-file dep)]
-            (reload-file! build-id file)))))))
+  [build-id path deep?]
+  (if (str/ends-with? path ".css")
+    (when (contains? (get-in @state [build-id :file-data]) path)
+      (reload-css-file! build-id path))
+    (when (contains? (get-in @state [build-id :source-files]) path)
+      (reload-clj-file! build-id path deep?))))
 
 (defn- on-file-changed!
-  [build-id file change-type]
+  [build-id file change-type deep?]
   (let [path (relative-path file)]
     (if (#{:del} change-type)
       (swap! state update-in [build-id :file-data] dissoc path)
-      (reload-file! build-id path))))
+      (reload-file! build-id path deep?))))
 
 (defn- build
-  [{:keys [build-id files change-type output?]}]
+  [{:keys [build-id files change-type output? deep?]}]
   (case change-type
     :push-all
     (do-push-all build-id)
@@ -510,7 +594,7 @@
     ; else
     (do
       (doseq [file files]
-        (on-file-changed! build-id file change-type))
+        (on-file-changed! build-id file change-type deep?))
       (spit-output build-id output?))))
 
 (defn push-all
@@ -526,6 +610,45 @@
     (.offer queue {:build-id    build-id
                    :change-type :persistent})
     (catch Exception _ex nil)))
+
+(defn- namespace-files
+  [ns]
+  (let [resource-path (-> (name (ns-name ns))
+                          (str/replace "-" "_")
+                          (str/replace "." "/"))]
+    (->> [".cljs" ".cljc" ".clj"]
+         (map #(io/resource (str resource-path %)))
+         (filter (fn [f] (and (some? f) (= "file" (.getProtocol ^URL f)))))
+         (map (fn [^URL f]
+                (-> (.toURI f)
+                    Paths/get
+                    (.toAbsolutePath)
+                    str
+                    relative-to-cwd))))))
+
+(defn- depencies
+  [file]
+  (let [{:keys [ns-requires]} (read-file-ns file)]
+    (reduce
+     (fn [acc ns]
+       (into acc (namespace-files ns)))
+     #{}
+     ns-requires)))
+
+(defn- deep-find-source-files
+  [acc file]
+  (let [files (->> (depencies file)
+                   (filter #(not (contains? acc %))))]
+    (doseq [f files]
+      (deep-find-source-files (conj! acc f) f))
+    acc))
+
+(defn- find-source-files
+  [entries]
+  (let [acc (transient #{})]
+    (doseq [file entries]
+      (deep-find-source-files (conj! acc file) file))
+    (persistent! acc)))
 
 (defonce ^:private worker-thread (atom nil))
 
@@ -544,19 +667,19 @@
         (reset! worker-thread t)))))
 
 (defn process
-  [{:keys [build-id source-paths file-extensions garden-fn output-dir filename
+  [{:keys [build-id entries watch-dirs file-extensions garden-fn output-dir filename
            watch? concat? scoped? verbose? tw-class-fn push-fn]
-    :or   {source-paths    (find-source-paths)
-           file-extensions ["cljs" "cljc" "clj"]
+    :or   {file-extensions ["cljs" "cljc" "clj" "css"]
+           watch-dirs      ["src"]
            filename        "garden.css"
            watch?          false
            concat?         false
            scoped?         true
            verbose?        true}}]
 
-  (assert (and (seq source-paths)
-               (every? string? source-paths))
-          "source-paths should be a sequence of strings")
+  (assert (and (seq entries)
+               (every? string? entries))
+          "entries should be a sequence of strings")
   (assert (and (seq file-extensions)
                (every? string? file-extensions))
           "file-extensions should be a sequence of strings")
@@ -591,12 +714,12 @@
   (locking RT/REQUIRE_LOCK
     (when-not (find-ns 'garden.core)
       (require
-        '[garden.core]
-        '[garden.color]
-        '[garden.selectors]
-        '[garden.units])))
+       '[garden.core]
+       '[garden.color]
+       '[garden.selectors]
+       '[garden.units])))
 
-  (let [input-file? (partial input-file? file-extensions)]
+  (let [source-files (find-source-files entries)]
     (swap! state assoc build-id {:build-id    build-id
                                  :output-dir  output-dir
                                  :filename    filename
@@ -606,6 +729,7 @@
                                  :verbose?    verbose?
                                  :concat?     concat?
                                  :scoped?     scoped?
+                                 :source-files source-files
                                  :deps-tree   {}
                                  :file-data   {}
                                  :watch       nil})
@@ -613,19 +737,17 @@
     (let [first-task {:build-id    build-id
                       :change-type :new
                       :output?     true
-                      :files       (->> (map io/file source-paths)
-                                        (mapcat file-seq)
-                                        (filter input-file?)
-                                        (into []))}]
+                      :deep?       false
+                      :files       (->> source-files (map io/file) (into []))}]
       (if watch?
         (do
           (.offer queue first-task)
           (start-worker-thread)
           (when verbose?
-            (println (str "[" build-id "] \n\uD83D\uDC40 Watching files in " (str/join ", " source-paths) " ...")))
+            (println (str "[" build-id "] \n\uD83D\uDC40 Watching files in " (str/join ", " watch-dirs) " ...")))
           (swap! state assoc-in [build-id :watch]
                  (fs/start nil
-                           (mapv io/file source-paths)
+                           (mapv io/file watch-dirs)
                            file-extensions
                            (fn [events]
                              (doseq [type [:mod :del :new]]
@@ -635,6 +757,7 @@
                                  (.offer queue {:build-id    build-id
                                                 :change-type type
                                                 :output?     (nil? push-fn)
+                                                :deep?       true
                                                 :files       (mapv :file updates)})))))))
         ;; release build
         (time (build first-task))))))
