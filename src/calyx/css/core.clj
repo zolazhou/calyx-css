@@ -6,7 +6,6 @@
    [clojure.java.io :as io]
    [clojure.stacktrace :as stacktrace]
    [clojure.string :as str]
-   [clojure.tools.deps.alpha :as t]
    [clojure.tools.deps.alpha.util.dir :refer [*the-dir*]]
    [clojure.tools.reader :as reader]
    [clojure.walk :refer [postwalk]]
@@ -14,7 +13,7 @@
    [shadow.cljs.devtools.server.fs-watch :as fs])
   (:import
    [clojure.lang RT]
-   [java.io File PushbackReader]
+   [java.io File FileNotFoundException PushbackReader]
    [java.net URL]
    [java.nio.file Paths]
    [java.util.concurrent ArrayBlockingQueue BlockingQueue TimeUnit]))
@@ -48,14 +47,8 @@
 (defonce ^:private state (atom {}))
 
 (defonce
-  ^{:private true :tag BlockingQueue}
-  queue (ArrayBlockingQueue. 512 false))
-
-(defn- find-source-paths
-  []
-  (let [{:keys [root-edn user-edn project-edn]} (t/find-edn-maps)
-        deps (t/merge-edns [root-edn user-edn project-edn])]
-    (:paths deps)))
+ ^{:private true :tag BlockingQueue}
+ queue (ArrayBlockingQueue. 512 false))
 
 (defn- relative-path
   [^File file]
@@ -546,8 +539,7 @@
   [build-id file-path]
   (println (str "[" build-id "] \u001B[32;1m Reloading CSS file" file-path "\u001B[0m"))
   (let [ns  (css-file-path->ns file-path)
-        css (str "/* generated from: " (name (ns-name ns)) " */\n"
-                 (slurp file-path))]
+        css (str "/* generated from: " (name (ns-name ns)) " */\n" (slurp file-path))]
     (update-state! build-id file-path {:ns        ns
                                        :file      file-path
                                        :order     100
@@ -561,7 +553,10 @@
     (update-state! build-id file result)
     (when (get-in @state [build-id :file-data file :dirty?])
       (doseq [css-file (get-in @state [build-id :file-data file :css-imports])]
-        (reload-css-file! build-id css-file)))
+        (try
+          (reload-css-file! build-id css-file)
+          (catch FileNotFoundException _e
+            (println (str "[" build-id "] \u001B[31;1mCSS import file not found: " css-file ", source: " file "\u001B[0m"))))))
     (when deep?
       (let [depended-by (get-in @state [build-id :deps-tree (:ns result) :depended-by])]
         (when (seq depended-by)
