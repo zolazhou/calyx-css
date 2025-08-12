@@ -4,6 +4,7 @@
    [calyx.css.util :as util]
    [clojure.core :as c]
    [clojure.java.io :as io]
+   [clojure.pprint :as pprint]
    [clojure.stacktrace :as stacktrace]
    [clojure.string :as str]
    [clojure.tools.deps.alpha.util.dir :refer [*the-dir*]]
@@ -162,35 +163,36 @@
 
 (defn all-tw-classes
   [form]
-  (let [classes (transient [])]
-    (postwalk
-     (fn [x]
-       (cond
-         (string? x)
-         (doseq [n (->> (str/split x #" ")
-                        (remove str/blank?))]
-           (conj! classes n))
-         (keyword? x)
-         (doseq [n (->> (name x)
-                        (re-seq #"\.[^\.#]+")
-                        (map (fn [s] (subs s 1))))]
-           (conj! classes n))))
-     form)
-    (persistent! classes)))
+  (->>
+   (tree-seq coll? seq form)
+   (mapcat
+    (fn [x]
+      (cond
+        (string? x)
+        (->> (str/split x #" ")
+             (remove str/blank?))
+
+        (keyword? x)
+        (->> (name x)
+             (re-seq #"\.[^\.#]+")
+             (map (fn [s] (subs s 1))))
+
+        :else
+        [])))
+   (into [])))
 
 (defn attrs-tw-classes
   [forms]
-  (let [classes (transient #{})]
-    (postwalk
-     (fn [x]
-       (when (and (vector? x)
-                  (= (count x) 2)
-                  (#{:class :className} (first x)))
-         (doseq [n (all-tw-classes x)]
-           (conj! classes n)))
-       x)
-     forms)
-    (persistent! classes)))
+  (->>
+   (tree-seq coll? seq forms)
+   (mapcat
+    (fn [x]
+      (if (and (vector? x)
+               (= (count x) 2)
+               (#{:class :className} (first x)))
+        (all-tw-classes x)
+        [])))
+   (into #{})))
 
 (def ^:dynamic *find-tailwind-classes* attrs-tw-classes)
 
@@ -417,7 +419,7 @@
                (css rules)
                (catch Exception ex
                  (println (str "[" build-id "]" ": \uD83D\uDCA5 garden rules error!"))
-                 (clojure.pprint/pprint rules)
+                 (pprint/pprint rules)
                  (throw ex))))))))
 
 (defn- tailwind-css
@@ -537,7 +539,7 @@
 
 (defn- reload-css-file!
   [build-id file-path]
-  (println (str "[" build-id "] \u001B[32;1m Reloading CSS file" file-path "\u001B[0m"))
+  (println (str "[" build-id "] \u001B[32;1mReloading CSS file " file-path "\u001B[0m"))
   (let [ns  (css-file-path->ns file-path)
         css (str "/* generated from: " (name (ns-name ns)) " */\n" (slurp file-path))]
     (update-state! build-id file-path {:ns        ns
@@ -621,7 +623,7 @@
                     str
                     relative-to-cwd))))))
 
-(defn- depencies
+(defn- dependencies
   [file]
   (let [{:keys [ns-requires]} (read-file-ns file)]
     (reduce
@@ -632,18 +634,23 @@
 
 (defn- deep-find-source-files
   [acc file]
-  (let [files (->> (depencies file)
+  (let [files (->> (dependencies file)
                    (filter #(not (contains? acc %))))]
-    (doseq [f files]
-      (deep-find-source-files (conj! acc f) f))
-    acc))
+    (reduce
+     (fn [acc f]
+       (deep-find-source-files (conj! acc f) f))
+     acc
+     files)))
 
 (defn- find-source-files
   [entries]
-  (let [acc (transient #{})]
-    (doseq [file entries]
-      (deep-find-source-files (conj! acc file) file))
-    (persistent! acc)))
+  (let [acc (transient (set entries))]
+    (persistent!
+     (reduce
+      (fn [acc file]
+        (deep-find-source-files acc file))
+      acc
+      entries))))
 
 (defonce ^:private worker-thread (atom nil))
 
@@ -713,22 +720,21 @@
        '[garden.color]
        '[garden.selectors]
        '[garden.units])))
-
   (let [entries      (map (fn [e] (.getPath (io/file e))) entries)
         source-files (find-source-files entries)]
-    (swap! state assoc build-id {:build-id    build-id
-                                 :output-dir  output-dir
-                                 :filename    filename
-                                 :garden-fn   garden-fn
-                                 :tw-class-fn tw-class-fn
-                                 :push-fn     push-fn
-                                 :verbose?    verbose?
-                                 :concat?     concat?
-                                 :scoped?     scoped?
+    (swap! state assoc build-id {:build-id     build-id
+                                 :output-dir   output-dir
+                                 :filename     filename
+                                 :garden-fn    garden-fn
+                                 :tw-class-fn  tw-class-fn
+                                 :push-fn      push-fn
+                                 :verbose?     verbose?
+                                 :concat?      concat?
+                                 :scoped?      scoped?
                                  :source-files source-files
-                                 :deps-tree   {}
-                                 :file-data   {}
-                                 :watch       nil})
+                                 :deps-tree    {}
+                                 :file-data    {}
+                                 :watch        nil})
 
     (let [first-task {:build-id    build-id
                       :change-type :new
