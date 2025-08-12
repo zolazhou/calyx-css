@@ -714,7 +714,8 @@
        '[garden.selectors]
        '[garden.units])))
 
-  (let [source-files (find-source-files entries)]
+  (let [entries      (map (fn [e] (.getPath (io/file e))) entries)
+        source-files (find-source-files entries)]
     (swap! state assoc build-id {:build-id    build-id
                                  :output-dir  output-dir
                                  :filename    filename
