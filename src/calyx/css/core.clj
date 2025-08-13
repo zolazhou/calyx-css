@@ -228,11 +228,11 @@
 (defn- read-file
   [file]
   (let [stream    (PushbackReader. (io/reader (io/file file)))
-        var-pos   (atom 0)
-        imports   (transient #{})
-        tailwinds (transient #{})
-        vars      (transient {})
-        css       (transient {})
+        var-pos   (volatile! 0)
+        imports   (volatile! (transient #{}))
+        tailwinds (volatile! (transient #{}))
+        vars      (volatile! (transient {}))
+        css       (volatile! (transient {}))
         read-opts {:read-cond? (str/ends-with? file ".cljc")}
         ns        (read-ns stream read-opts)]
     (binding [reader/*data-readers* data-readers
@@ -240,31 +240,32 @@
       (loop [form (read-form stream read-opts)]
         (when (list? form)
           (when-let [[v tw] (parse-var form)]
-            (assoc! vars v
-                    (with-meta form {:position (swap! var-pos inc)}))
+            (vswap! vars assoc! v
+                    (with-meta form {:position (vswap! var-pos inc)}))
             (doseq [c tw]
-              (conj! tailwinds c)))
+              (vswap! tailwinds conj! c)))
           (condp = (first form)
             'def (let [s (second form)]
                    (when (true? (:garden (meta s)))
-                     (assoc! css s (last form))))
+                     (vswap! css assoc! s (last form))))
             'import-css (let [abs-path (resolve-relative-path (second form) file)]
-                          (conj! imports abs-path))
+                          (vswap! imports conj! abs-path))
             'defstyle (let [s (second form)]
-                        (assoc! css s (last form)))
+                        (vswap! css assoc! s (last form)))
             'defnc (when-let [[s c] (parse-component-css form)]
-                     (assoc! css s c))
+                     (vswap! css assoc! s c))
             'defsc (when-let [[s c] (parse-component-css form)]
-                     (assoc! css s c))
+                     (vswap! css assoc! s c))
             'defui (when-let [[s c] (parse-component-css form)]
-                     (assoc! css s c))
+                     (vswap! css assoc! s c))
             nil))
         (when (not= form :eof)
           (recur (read-form stream read-opts)))))
-    (assoc ns :ns-vars (persistent! vars)
-           :css (persistent! css)
-           :tailwinds (persistent! tailwinds)
-           :css-imports (persistent! imports))))
+    (assoc ns
+           :ns-vars (persistent! @vars)
+           :css (persistent! @css)
+           :tailwinds (persistent! @tailwinds)
+           :css-imports (persistent! @imports))))
 
 (defn- find-css
   [build-id file]
